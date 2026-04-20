@@ -1,0 +1,1661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense Parser — Xero Export</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #f5f4f0;
+    --surface: #ffffff;
+    --surface2: #f0efe9;
+    --border: #dddbd2;
+    --border-strong: #b8b5a8;
+    --text: #1a1916;
+    --text-muted: #6b6860;
+    --text-faint: #9c9a93;
+    --accent: #1a1916;
+    --accent-light: #e8e7e1;
+    --green: #1a6b3a;
+    --green-bg: #e8f5ed;
+    --red: #8b2020;
+    --red-bg: #faecec;
+    --amber: #7a4f00;
+    --amber-bg: #fdf3e0;
+    --blue: #1a3d6b;
+    --blue-bg: #e8eefc;
+    --radius: 6px;
+    --radius-lg: 10px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  header {
+    background: var(--text);
+    color: #fff;
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 2px solid #000;
+  }
+
+  header h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+
+  header span {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: #aaa;
+    letter-spacing: 0.06em;
+  }
+
+  .main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 28px 24px 60px;
+  }
+
+  /* ── DROP ZONE ── */
+  .drop-zone {
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    padding: 52px 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--text);
+    background: var(--accent-light);
+  }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .drop-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+    color: var(--text-muted);
+  }
+  .drop-zone h2 {
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .drop-zone p {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* ── SETTINGS STRIP ── */
+  .settings-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    display: grid;
+    grid-template-columns: 2fr 1fr 0.8fr 0.8fr;
+    gap: 16px;
+    align-items: end;
+    margin-bottom: 16px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+  }
+  .field input, .field select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    transition: border-color 0.15s;
+  }
+  .field input:focus, .field select:focus {
+    outline: none;
+    border-color: var(--text);
+    background: #fff;
+  }
+
+  /* ── HOME CALC ── */
+  .home-calc-bar {
+    background: var(--blue-bg);
+    border: 1px solid #b0c4f0;
+    border-radius: var(--radius-lg);
+    padding: 16px 24px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .home-calc-bar.visible { display: block; }
+  .home-calc-bar .hc-title {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 12px;
+  }
+  .hc-method-btn {
+    padding: 5px 14px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid #b0c4f0;
+    background: transparent;
+    color: var(--blue);
+    transition: all 0.15s;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .hc-method-btn.active {
+    background: var(--blue);
+    color: #fff;
+    border-color: var(--blue);
+  }
+    display: grid;
+    grid-template-columns: repeat(5, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .home-calc-grid .field label { color: var(--blue); }
+  .home-calc-grid .field input, .home-calc-grid .field select {
+    background: #f0f5fe;
+    border-color: #b0c4f0;
+  }
+  .home-result {
+    padding: 8px 14px;
+    background: var(--blue);
+    color: #fff;
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    font-weight: 500;
+    white-space: nowrap;
+    text-align: center;
+    min-width: 90px;
+  }
+  .home-result small {
+    display: block;
+    font-size: 10px;
+    opacity: 0.8;
+    font-family: 'IBM Plex Sans', sans-serif;
+    margin-bottom: 2px;
+  }
+
+  /* ── TABLE AREA ── */
+  .table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .table-header h3 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .row-count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: auto;
+    margin-bottom: 20px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  thead th.sortable:hover { background: #2a2a27; }
+  thead th.sort-asc, thead th.sort-desc { background: #2a2a27; }
+  .sort-ind { font-size: 9px; opacity: 0.6; margin-left: 3px; }
+    background: var(--text);
+    color: #fff;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 10px 10px;
+    text-align: left;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  tbody tr.needs-attention td:nth-child(2) select,
+  tbody tr.needs-attention td:nth-child(3) select {
+    border-color: #f0a0a0;
+    background: var(--red-bg);
+  }
+  tbody tr.excluded td { text-decoration: line-through; }
+  tbody tr.excluded td.no-strike { text-decoration: none; }
+
+  tbody td {
+    padding: 7px 10px;
+    vertical-align: middle;
+  }
+
+  tbody td input[type=text],
+  tbody td input[type=number],
+  tbody td input[type=date],
+  tbody td select {
+    width: 100%;
+    padding: 5px 7px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  tbody td input:hover, tbody td select:hover {
+    border-color: var(--border);
+    background: var(--bg);
+  }
+  tbody td input:focus, tbody td select:focus {
+    outline: none;
+    border-color: var(--text);
+    background: #fff;
+  }
+
+  .toggle-post {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    border: none;
+    transition: background 0.2s, color 0.2s;
+    user-select: none;
+  }
+  .toggle-post.yes { background: var(--green-bg); color: var(--green); }
+  .toggle-post.no  { background: var(--red-bg);   color: var(--red); }
+
+  .bu-cell {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .bu-cell input {
+    width: 58px !important;
+  }
+  .bu-cell .bu-suffix {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .use-home-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .use-home-btn.active {
+    background: var(--blue-bg);
+    border-color: #b0c4f0;
+    color: var(--blue);
+  }
+
+  .net-amt {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: right;
+    white-space: nowrap;
+  }
+  .net-amt.adjusted { color: var(--green); font-weight: 500; }
+
+  .del-row {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 4px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+  }
+  .del-row:hover { color: var(--red); background: var(--red-bg); }
+
+  /* ── SUMMARY FOOTER ── */
+  .summary-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 20px;
+  }
+  .stat-card .stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .stat-card .stat-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    font-weight: 500;
+  }
+
+  /* ── EXPORT BUTTONS ── */
+  .export-bar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .btn:hover { background: var(--surface2); border-color: var(--border-strong); }
+
+  .btn-primary {
+    background: var(--text);
+    color: #fff;
+    border-color: var(--text);
+  }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-primary:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .btn-add {
+    background: var(--green-bg);
+    color: var(--green);
+    border-color: #a8d5b8;
+  }
+  .btn-add:hover { background: #d4eddd; }
+
+  /* ── ALERT ── */
+  .alert {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .alert.show { display: block; }
+  .alert-info { background: var(--blue-bg); color: var(--blue); border: 1px solid #b0c4f0; }
+  .alert-success { background: var(--green-bg); color: var(--green); border: 1px solid #a8d5b8; }
+  .alert-warn { background: var(--amber-bg); color: var(--amber); border: 1px solid #e8c97a; }
+
+  /* ── EMPTY STATE ── */
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-faint);
+    font-size: 13px;
+  }
+  .empty-state p { margin-top: 8px; }
+
+  /* ── MISC ── */
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .text-right { text-align: right; }
+  hr.divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+  /* ── EMAIL PASTE ── */
+  .email-paste-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 24px;
+    margin-top: 12px;
+  }
+  .email-paste-title {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .email-paste-bar textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    resize: vertical;
+    line-height: 1.6;
+  }
+  .email-paste-bar textarea:focus {
+    outline: none;
+    border-color: var(--text);
+    background: #fff;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⬡ EXPENSE PARSER</h1>
+  <span>BARRISTER EXPENSES → XERO CSV</span>
+</header>
+
+<div class="main">
+
+  <!-- ALERT -->
+  <div class="alert alert-info show" id="mainAlert">
+    Drop the client's completed expense template (.xlsx) below to begin. All data stays in your browser — nothing is uploaded.
+  </div>
+
+  <!-- DROP ZONE -->
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.msg">
+    <div class="drop-icon">📂</div>
+    <h2>Drop file here</h2>
+    <p>Client expense template (.xlsx) — or drag an Outlook email (.msg) to extract expenses automatically</p>
+  </div>
+
+  <!-- EMAIL PASTE -->
+  <div class="email-paste-bar">
+    <div class="email-paste-title">✉ Paste email body</div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Paste the expense email text below. Claude will extract rows automatically — missing dates default to the quarter end.</p>
+    <textarea id="emailPasteBox" placeholder="Paste email content here…" rows="5"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
+      <button class="btn btn-primary" id="parseEmailBtn" onclick="parseEmail()">Extract expenses from email</button>
+      <span id="emailStatus" style="font-size:12px;color:var(--text-muted);"></span>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- SETTINGS -->
+  <div class="settings-bar">
+    <div class="field">
+      <label>Full name (ContactName)</label>
+      <input type="text" id="clientName" placeholder="e.g. John Smith" oninput="refreshExportBtn()">
+    </div>
+    <div class="field">
+      <label>Quarter end</label>
+      <select id="quarter" onchange="refreshExportBtn()">
+        <option value="Mar">March</option>
+        <option value="Jun">June</option>
+        <option value="Sep">September</option>
+        <option value="Dec">December</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Year</label>
+      <input type="number" id="yearInput" placeholder="e.g. 2025" min="2000" max="2099" oninput="refreshExportBtn()">
+    </div>
+
+    <div class="field" style="display:flex;flex-direction:column;justify-content:flex-end;">
+      <button class="btn btn-add" onclick="addBlankRow()">+ Add row</button>
+    </div>
+  </div>
+
+  <!-- HOME OFFICE CALCULATOR -->
+  <div class="home-calc-bar" id="homeCalcBar">
+    <div class="hc-title">⌂ Use of home — business proportion</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px;">
+      <button class="hc-method-btn active" id="btnPctMethod" onclick="setHomeMethod('pct')">% Method</button>
+      <button class="hc-method-btn" id="btnRoomsMethod" onclick="setHomeMethod('rooms')">Rooms Method</button>
+    </div>
+
+    <!-- % Method -->
+    <div id="hcPctInputs" class="home-calc-grid" style="grid-template-columns:1fr 1fr auto;">
+      <div class="field">
+        <label>Home use %</label>
+        <input type="number" id="hcHomePct" value="25" min="0" max="100" step="0.01" oninput="calcHome()">
+      </div>
+      <div class="field">
+        <label>Time %</label>
+        <input type="number" id="hcTimePctA" value="90" min="0" max="100" step="0.01" oninput="calcHome()">
+      </div>
+      <div style="display:flex;align-items:flex-end;">
+        <div class="home-result" id="homeResult">
+          <small>Effective %</small>
+          <span id="homePctDisplay">22.50</span>%
+        </div>
+      </div>
+    </div>
+
+    <!-- Rooms Method -->
+    <div id="hcRoomsInputs" class="home-calc-grid" style="grid-template-columns:1fr 1fr 1fr auto;display:none;">
+      <div class="field">
+        <label>Rooms used</label>
+        <input type="number" id="hcWorkRooms" value="1" min="1" oninput="calcHome()">
+      </div>
+      <div class="field">
+        <label>Total rooms</label>
+        <input type="number" id="hcRooms" value="4" min="1" oninput="calcHome()">
+      </div>
+      <div class="field">
+        <label>Time %</label>
+        <input type="number" id="hcTimePctB" value="90" min="0" max="100" step="0.01" oninput="calcHome()">
+      </div>
+      <div style="display:flex;align-items:flex-end;">
+        <div class="home-result" id="homeResultRooms">
+          <small>Effective %</small>
+          <span id="homePctDisplayRooms">22.50</span>%
+        </div>
+      </div>
+    </div>
+
+    <div id="hcEffectiveLine" style="margin-top:12px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--blue);padding:8px 12px;background:rgba(26,61,107,0.07);border-radius:4px;"></div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="table-header">
+    <h3>EXPENSE ROWS</h3>
+    <span class="row-count" id="rowCount">0 rows</span>
+  </div>
+
+  <div class="table-wrap" id="tableWrap">
+    <div class="empty-state" id="emptyState">
+      <div style="font-size:28px">📋</div>
+      <p>No rows yet. Drop a file above or click <strong>+ Add row</strong> to start manually.</p>
+    </div>
+    <table id="expTable" style="display:none">
+      <thead>
+        <tr>
+          <th style="width:54px" onclick="sortBy('post')" class="sortable" data-col="post">Post? <span class="sort-ind" id="si-post"></span></th>
+          <th style="min-width:180px" onclick="sortBy('acc')" class="sortable" data-col="acc">Account <span class="sort-ind" id="si-acc"></span></th>
+          <th style="min-width:160px" onclick="sortBy('vat')" class="sortable" data-col="vat">VAT Rate <span class="sort-ind" id="si-vat"></span></th>
+          <th style="min-width:90px" onclick="sortBy('ref')" class="sortable" data-col="ref">Ref <span class="sort-ind" id="si-ref"></span></th>
+          <th style="min-width:110px" onclick="sortBy('date')" class="sortable" data-col="date">Date <span class="sort-ind" id="si-date"></span></th>
+          <th style="min-width:110px" onclick="sortBy('supplier')" class="sortable" data-col="supplier">Supplier <span class="sort-ind" id="si-supplier"></span></th>
+          <th style="min-width:140px" onclick="sortBy('desc')" class="sortable" data-col="desc">Description <span class="sort-ind" id="si-desc"></span></th>
+          <th style="width:90px" onclick="sortBy('gross')" class="sortable" data-col="gross">Gross £ <span class="sort-ind" id="si-gross"></span></th>
+          <th style="width:120px">% BU</th>
+          <th style="width:70px">Home</th>
+          <th style="width:90px" class="text-right" onclick="sortBy('net')" class="sortable" data-col="net">Net £ <span class="sort-ind" id="si-net"></span></th>
+          <th style="width:32px"></th>
+        </tr>
+      </thead>
+      <tbody id="expBody"></tbody>
+    </table>
+  </div>
+
+  <!-- SUMMARY -->
+  <div class="summary-bar" id="summaryBar" style="display:none">
+    <div class="stat-card">
+      <div class="stat-label">Rows to post</div>
+      <div class="stat-val" id="statPost">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Rows excluded</div>
+      <div class="stat-val" id="statExcl">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Gross total</div>
+      <div class="stat-val" id="statGross">£0.00</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Net (adjusted) total</div>
+      <div class="stat-val" id="statNet">£0.00</div>
+    </div>
+  </div>
+
+  <!-- EXPORT -->
+  <div class="export-bar">
+    <button class="btn btn-primary" id="exportBtn" onclick="exportCSV()" disabled>
+      ↓ Download Xero CSV
+    </button>
+    <button class="btn" onclick="clearAll()">✕ Clear all</button>
+    <span id="exportNote" style="font-size:12px;color:var(--text-faint);margin-left:4px"></span>
+  </div>
+
+</div>
+
+<script>
+// ── DATA ──────────────────────────────────────────────────────────────────────
+
+const ACCOUNTS = [
+  {code:'200', name:'Chambers rent and expenses'},
+  {code:'201', name:'Professional indemnity insurance'},
+  {code:'202', name:'Professional subscriptions'},
+  {code:'203', name:'Telephone & Internet'},
+  {code:'204', name:'IT Software, consumables and maintenance'},
+  {code:'205', name:'Professional literature (Hard copies)'},
+  {code:'206', name:'Digital literature'},
+  {code:'207', name:'Postage, Freight & Courier'},
+  {code:'208', name:'Printing & Stationery'},
+  {code:'209', name:'Continuing Professional Development costs'},
+  {code:'210', name:'General Expenses'},
+  {code:'211', name:'Repairs & Maintenance'},
+  {code:'212', name:'Laundry and replacement of court attire'},
+  {code:'213', name:'Use of home as an office'},
+  {code:'300', name:'Travel - International'},
+  {code:'301', name:'Travel - National'},
+  {code:'302', name:'Motor Vehicle Expenses'},
+  {code:'303', name:'Interest on a car loan'},
+  {code:'304', name:'Fuel'},
+  {code:'305', name:'Parking'},
+  {code:'306', name:'Subsistence'},
+  {code:'400', name:'Accountancy and bookkeeping'},
+  {code:'401', name:'Devilling and professional assistance'},
+  {code:'402', name:'Advertising & Marketing'},
+  {code:'403', name:'Administrative or secretarial assistance'},
+  {code:'410', name:'Rental expenses'},
+  {code:'500', name:'Computer hardware'},
+  {code:'501', name:'Office furniture'},
+  {code:'502', name:'Wig and gown'},
+  {code:'700', name:'Bank Fees'},
+  {code:'701', name:'Interest Paid'},
+  {code:'900', name:'Charitable and Political Donations'},
+  {code:'901', name:'Entertaining'},
+  {code:'999', name:'Personal usage adjustments'},
+];
+
+const VAT_DEFAULTS = {
+  '200':'20% (VAT on Expenses)', '201':'12.5% (VAT on Expenses)',
+  '202':'5% (VAT on Expenses)',  '203':'Exempt Expenses',
+  '204':'Zero Rated Expenses',   '205':'No VAT',
+  '301':'Zero Rated Expenses',
+};
+
+const VAT_RATES = [
+  '20% (VAT on Expenses)', '12.5% (VAT on Expenses)', '5% (VAT on Expenses)',
+  'Exempt Expenses', 'Zero Rated Expenses', 'No VAT',
+];
+
+let rows = [];
+let nextId = 0;
+
+// ── ACCOUNT / VAT HELPERS ────────────────────────────────────────────────────
+
+function accOptions(selected) {
+  const blank = `<option value=""${!selected?' selected':''}>— select account —</option>`;
+  return blank + ACCOUNTS.map(a => {
+    const val = `${a.code} - ${a.name}`;
+    return `<option value="${val}"${val===selected?' selected':''}>${val}</option>`;
+  }).join('');
+}
+
+function vatOptions(selected) {
+  const blank = `<option value=""${!selected?' selected':''}>— select VAT rate —</option>`;
+  return blank + VAT_RATES.map(v =>
+    `<option value="${v}"${v===selected?' selected':''}>${v}</option>`
+  ).join('');
+}
+
+function defaultVat(accFull) {
+  const code = (accFull||'').split(' - ')[0];
+  return VAT_DEFAULTS[code] || 'No VAT';
+}
+
+// ── FILE PARSING ─────────────────────────────────────────────────────────────
+
+function excelDateToISO(val) {
+  if (!val) return '';
+  if (val instanceof Date) return val.toISOString().slice(0,10);
+  if (typeof val === 'number') {
+    // Excel serial date
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return d.toISOString().slice(0,10);
+  }
+  if (typeof val === 'string') {
+    // Try parsing various formats
+    const clean = val.trim();
+    // DD/MM/YYYY
+    const m1 = clean.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m1) return `${m1[3]}-${m1[2].padStart(2,'0')}-${m1[1].padStart(2,'0')}`;
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+    return clean;
+  }
+  return '';
+}
+
+function parseFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
+      const wsName = wb.SheetNames.includes('Expenses') ? 'Expenses' : wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:false, dateNF:'yyyy-mm-dd'});
+
+      // Row 0 = title, Row 1 = headers, data from row 2 onward
+      // Cols: A=Post? B=TypeOfExpense C=VATRate D=PostType E=Reference F=Date G=Supplier H=Description I=GrossAmount
+      let imported = 0;
+      rows = [];
+      nextId = 0;
+
+      for (let i = 2; i < data.length; i++) {
+        const r = data[i];
+        if (!r || r.every(v => !v)) continue;
+        const gross = parseFloat(String(r[8]||'').replace(/[£,]/g,''));
+        if (!gross && !r[7] && !r[6]) continue; // skip fully empty
+
+        const accRaw = String(r[1]||'').trim();
+        // Use exactly what the client provided — match to our account list, blank if unrecognised
+        let accFull = '';
+        if (accRaw) {
+          const codeMatch = accRaw.match(/^(\d{3})/);
+          if (codeMatch) {
+            const found = ACCOUNTS.find(a => a.code === codeMatch[1]);
+            accFull = found ? `${found.code} - ${found.name}` : ''; // blank if code not in list
+          }
+          // if no numeric code prefix at all, leave blank — client left it empty or typed something invalid
+        }
+
+        const vatRaw = String(r[2]||'').trim();
+        // Use exactly what the client provided — match to our VAT list, blank if unrecognised
+        const vatMatch = VAT_RATES.find(v => v.toLowerCase() === vatRaw.toLowerCase());
+        const vat = vatMatch || ''; // blank if not a recognised VAT rate
+
+        const dateRaw = r[5];
+        let dateISO = '';
+        if (dateRaw) {
+          // Try numeric serial first
+          const num = parseFloat(dateRaw);
+          if (!isNaN(num) && num > 40000) {
+            const d = new Date(Math.round((num - 25569) * 86400 * 1000));
+            dateISO = d.toISOString().slice(0,10);
+          } else {
+            dateISO = excelDateToISO(dateRaw);
+          }
+        }
+
+        addRow({
+          post: String(r[0]||'YES').trim().toUpperCase() === 'NO' ? 'NO' : 'YES',
+          acc: accFull,
+          vat: vat,
+          ref: String(r[4]||'').trim(),
+          date: dateISO,
+          supplier: String(r[6]||'').trim(),
+          desc: String(r[7]||'').trim(),
+          gross: isNaN(gross) ? '' : gross,
+          bu: '',
+          home: false,
+        });
+        imported++;
+      }
+
+      const blankAcc = rows.filter(r => !r.acc).length;
+      const blankVat = rows.filter(r => !r.vat).length;
+      let alertMsg = `✓ Imported ${imported} row${imported!==1?'s':''} from "${file.name}".`;
+      if (blankAcc || blankVat) {
+        alertMsg += ` ${blankAcc+blankVat} field${blankAcc+blankVat!==1?'s need':' needs'} attention — rows with missing account or VAT rate are highlighted.`;
+      } else {
+        alertMsg += ` Review % BU and home proportion as needed, then export.`;
+      }
+      setAlert(alertMsg, blankAcc||blankVat ? 'warn' : 'success');
+      showTable();
+      checkHomeRows();
+    } catch(err) {
+      setAlert('Could not read file: ' + err.message + '. Please ensure it is the standard client expense template (.xlsx).', 'warn');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── MSG FILE PARSER ───────────────────────────────────────────────────────────
+
+function parseMsgFile(file) {
+  setAlert('Reading email file…', 'info');
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      // .msg files are OLE Compound Document format (binary)
+      // Extract readable text by scanning for UTF-16 and ASCII text runs
+      const buf = e.target.result;
+      const bytes = new Uint8Array(buf);
+      const text = extractMsgText(bytes);
+
+      if (!text || text.trim().length < 10) {
+        setAlert('Could not read email content. Try copying the email body and pasting it in the text box below instead.', 'warn');
+        return;
+      }
+
+      // Populate the paste box and trigger extraction
+      document.getElementById('emailPasteBox').value = text;
+      setAlert('Email content extracted — running expense detection…', 'info');
+      parseEmail();
+    } catch(err) {
+      setAlert('Could not read .msg file: ' + err.message + '. Try pasting the email text instead.', 'warn');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function extractMsgText(bytes) {
+  // Scan for readable ASCII/UTF-8 text runs of meaningful length
+  // MSG files store body text in multiple formats; we grab the longest clean run
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const decoder16 = new TextDecoder('utf-16le', { fatal: false });
+
+  let best = '';
+
+  // Try UTF-16LE runs (Outlook stores body as UTF-16)
+  for (let i = 0; i < bytes.length - 40; i++) {
+    // Look for runs where every other byte is 0 (UTF-16LE ASCII range)
+    if (bytes[i+1] === 0 && bytes[i] >= 0x20 && bytes[i] < 0x7f) {
+      let end = i;
+      while (end < bytes.length - 1 && bytes[end+1] === 0 && (bytes[end] >= 0x09)) {
+        end += 2;
+      }
+      const len = end - i;
+      if (len > 80) {
+        const chunk = decoder16.decode(bytes.slice(i, end));
+        const cleaned = chunk.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').trim();
+        if (cleaned.length > best.length && /[a-zA-Z]{3,}/.test(cleaned)) {
+          best = cleaned;
+        }
+      }
+    }
+  }
+
+  // Also try plain UTF-8/ASCII runs
+  let start = -1;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    const printable = (b >= 0x20 && b < 0x7f) || b === 0x09 || b === 0x0a || b === 0x0d;
+    if (printable) {
+      if (start === -1) start = i;
+    } else {
+      if (start !== -1 && (i - start) > 120) {
+        const chunk = decoder.decode(bytes.slice(start, i)).trim();
+        const cleaned = stripHtml(chunk);
+        if (cleaned.length > best.length && /[a-zA-Z]{3,}/.test(cleaned)) {
+          best = cleaned;
+        }
+      }
+      start = -1;
+    }
+  }
+
+  return best.slice(0, 4000); // cap at 4000 chars — enough for any expense email
+}
+
+function stripHtml(html) {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+
+
+function getQuarterEndDate() {
+  const quarter = document.getElementById('quarter').value;
+  const year = document.getElementById('yearInput').value || new Date().getFullYear();
+  const ends = { Mar: `${year}-03-31`, Jun: `${year}-06-30`, Sep: `${year}-09-30`, Dec: `${year}-12-31` };
+  return ends[quarter] || `${year}-03-31`;
+}
+
+async function parseEmail() {
+  const text = document.getElementById('emailPasteBox').value.trim();
+  if (!text) {
+    setEmailStatus('Please paste some email text first.', 'warn');
+    return;
+  }
+
+  const btn = document.getElementById('parseEmailBtn');
+  const fallbackDate = getQuarterEndDate();
+
+  btn.disabled = true;
+  setEmailStatus('Extracting expenses…', 'info');
+
+  try {
+    const systemPrompt = `You are an expense extraction assistant. Extract all expense items from the email text provided.
+Return ONLY a valid JSON array — no markdown, no explanation, no code fences.
+Each item must have these fields:
+  date: ISO date string YYYY-MM-DD if found, otherwise null
+  supplier: the company or person paid, or null if unclear
+  description: short description of the expense
+  amount: numeric amount in GBP (number, not string), or null if not found
+
+Example output:
+[{"date":"2025-03-15","supplier":"EE","description":"Mobile phone bill","amount":45.00},{"date":null,"supplier":"Shell","description":"Fuel","amount":60.00}]`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || 'API error');
+
+    const raw = data.content.find(b => b.type === 'text')?.text || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const expenses = JSON.parse(clean);
+
+    if (!Array.isArray(expenses) || expenses.length === 0) {
+      setEmailStatus('No expenses found in that text. Try rephrasing or check the content.', 'warn');
+      btn.disabled = false;
+      return;
+    }
+
+    let added = 0;
+    expenses.forEach(e => {
+      addRow({
+        post: 'YES',
+        acc: '',
+        vat: '',
+        ref: '',
+        date: e.date || fallbackDate,
+        supplier: e.supplier || '',
+        desc: e.description || '',
+        gross: e.amount !== null && !isNaN(e.amount) ? e.amount : '',
+        bu: '',
+        home: false,
+      });
+      added++;
+    });
+
+    document.getElementById('emailPasteBox').value = '';
+    showTable();
+    checkHomeRows();
+    setEmailStatus(`✓ ${added} expense${added!==1?'s':''} added — set account codes and VAT rates for highlighted rows.`, 'success');
+    setAlert(`✓ ${added} row${added!==1?'s':''} extracted from email. Account and VAT need filling in.`, 'warn');
+
+  } catch(err) {
+    setEmailStatus('Could not extract expenses: ' + err.message, 'warn');
+  }
+
+  btn.disabled = false;
+}
+
+function setEmailStatus(msg, type) {
+  const el = document.getElementById('emailStatus');
+  const colours = { info: 'var(--text-muted)', success: 'var(--green)', warn: 'var(--amber)' };
+  el.style.color = colours[type] || 'var(--text-muted)';
+  el.textContent = msg;
+}
+
+
+
+function addRow(data) {
+  const id = nextId++;
+  const d = data || {};
+  rows.push({
+    id,
+    post: d.post || 'YES',
+    acc: d.acc || '',
+    vat: d.vat || '',
+    ref: d.ref || '',
+    date: d.date || '',
+    supplier: d.supplier || '',
+    desc: d.desc || '',
+    gross: d.gross !== undefined ? d.gross : '',
+    bu: d.bu || '',
+    home: d.home || false,
+  });
+  renderRow(rows[rows.length-1]);
+  updateUI();
+}
+
+function addBlankRow() {
+  addRow({});
+  showTable();
+}
+
+function removeRow(id) {
+  rows = rows.filter(r => r.id !== id);
+  const el = document.getElementById('tr_'+id);
+  if (el) el.remove();
+  updateUI();
+  if (rows.length === 0) {
+    document.getElementById('expTable').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'block';
+  }
+}
+
+function renderRow(row) {
+  const tbody = document.getElementById('expBody');
+  const tr = document.createElement('tr');
+  tr.id = 'tr_' + row.id;
+  if (row.post === 'NO') tr.classList.add('excluded');
+  if (!row.acc || !row.vat) tr.classList.add('needs-attention');
+  tr.innerHTML = buildRowHTML(row);
+  tbody.appendChild(tr);
+}
+
+function buildRowHTML(row) {
+  const id = row.id;
+  const gross = row.gross !== '' ? parseFloat(row.gross) : 0;
+  const net = calcNet(gross, row.bu, row.home, row.acc);
+  const netAdj = (isHome213(row.acc) || row.bu !== '' || row.home) && net !== gross;
+  const netStr = isNaN(net) ? '—' : `£${net.toFixed(2)}`;
+  return `
+    <td class="no-strike">
+      <button class="toggle-post ${row.post==='YES'?'yes':'no'}" id="postBtn_${id}"
+        onclick="togglePost(${id})">${row.post}</button>
+    </td>
+    <td><select onchange="onAccChange(${id},this.value)">${accOptions(row.acc)}</select></td>
+    <td><select onchange="onVatChange(${id},this.value)">${vatOptions(row.vat)}</select></td>
+    <td><input type="text" value="${esc(row.ref)}" onchange="setField(${id},'ref',this.value)" placeholder="Ref"></td>
+    <td><input type="date" value="${row.date||''}" onchange="setField(${id},'date',this.value)"></td>
+    <td><input type="text" value="${esc(row.supplier)}" onchange="setField(${id},'supplier',this.value)" placeholder="Supplier"></td>
+    <td><input type="text" value="${esc(row.desc)}" onchange="setField(${id},'desc',this.value)" placeholder="Description"></td>
+    <td><input type="number" step="0.01" value="${row.gross!==''?row.gross:''}" onchange="setField(${id},'gross',this.value);updateNet(${id})" onkeyup="updateNet(${id})" placeholder="0.00"></td>
+    <td class="no-strike">
+      <div class="bu-cell">
+        <input type="number" min="0" max="100" step="1" value="${isHome213(row.acc) ? '' : (row.bu!==''?row.bu:'')}"
+          onchange="setField(${id},'bu',this.value);propagateBU(${id},this.value);updateNet(${id})"
+          onkeyup="updateNet(${id})"
+          placeholder="${isHome213(row.acc) ? '—' : '100'}"
+          ${isHome213(row.acc) ? 'disabled style="opacity:0.35;cursor:not-allowed"' : ''}>
+        <span class="bu-suffix">${isHome213(row.acc) ? '' : '%'}</span>
+      </div>
+    </td>
+    <td class="no-strike">
+      ${isHome213(row.acc)
+        ? `<span class="use-home-btn active" style="cursor:default;opacity:0.7" title="Home proportion applied automatically">⌂ AUTO</span>`
+        : `<button class="use-home-btn${row.home?' active':''}" id="homeBtn_${id}" onclick="toggleHome(${id})" title="Apply home office proportion">${row.home?'⌂ ON':'⌂'}</button>`
+      }
+    </td>
+    <td class="no-strike">
+      <div class="net-amt${netAdj?' adjusted':''}\" id="net_${id}">${netStr}</div>
+    </td>
+    <td class="no-strike">
+      <button class="del-row" onclick="removeRow(${id})">×</button>
+    </td>
+  `;
+}
+
+function esc(s) {
+  return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+function setField(id, field, val) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row[field] = val;
+  if (field === 'vat' || field === 'acc') {
+    const tr = document.getElementById('tr_'+id);
+    if (tr && row.acc && row.vat) tr.classList.remove('needs-attention');
+  }
+  updateSummary();
+  refreshExportBtn();
+}
+
+function propagateBU(id, val) {
+  const source = rows.find(r => r.id === id);
+  if (!source || !source.acc.startsWith('203')) return;
+  const supplier = (source.supplier || '').trim().toLowerCase();
+  if (!supplier) return;
+
+  rows.forEach(r => {
+    if (r.id === id) return;
+    if (!r.acc.startsWith('203')) return;
+    const rSupplier = (r.supplier || '').trim().toLowerCase();
+    // Also read live supplier from DOM in case it was edited
+    const supEl = document.querySelector(`#tr_${r.id} td:nth-child(6) input`);
+    const domSupplier = supEl ? supEl.value.trim().toLowerCase() : rSupplier;
+    if (domSupplier !== supplier) return;
+
+    // Apply same BU
+    r.bu = val;
+    const buEl = document.querySelector(`#tr_${r.id} .bu-cell input`);
+    if (buEl) buEl.value = val;
+    updateNet(r.id);
+  });
+}
+
+function onAccChange(id, val) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row.acc = val;
+  const dv = defaultVat(val);
+  if (dv) {
+    row.vat = dv;
+  }
+  const tr = document.getElementById('tr_'+id);
+  if (tr) {
+    tr.innerHTML = buildRowHTML(row);
+    if (!row.acc || !row.vat) tr.classList.add('needs-attention');
+    else tr.classList.remove('needs-attention');
+  }
+  // Propagate acc+vat to rows with same description
+  propagateDescMatch(id, 'acc');
+  checkHomeRows();
+  updateSummary();
+  refreshExportBtn();
+}
+
+function onVatChange(id, val) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row.vat = val;
+  const tr = document.getElementById('tr_'+id);
+  if (tr && row.acc && row.vat) tr.classList.remove('needs-attention');
+  // Propagate vat to rows with same description
+  propagateDescMatch(id, 'vat');
+  updateSummary();
+  refreshExportBtn();
+}
+
+// Track rows that were auto-propagated so user can undo per-row
+const propagatedRows = new Set();
+
+function propagateDescMatch(sourceId, changedField) {
+  const source = rows.find(r => r.id === sourceId);
+  if (!source) return;
+  const descEl = document.querySelector(`#tr_${sourceId} td:nth-child(7) input`);
+  const desc = (descEl ? descEl.value : source.desc).trim().toLowerCase();
+  if (!desc) return;
+
+  rows.forEach(r => {
+    if (r.id === sourceId) return;
+    // Don't override if user has already manually broken this row free
+    if (propagatedRows.has(`manual_${r.id}`)) return;
+    const rDescEl = document.querySelector(`#tr_${r.id} td:nth-child(7) input`);
+    const rDesc = (rDescEl ? rDescEl.value : r.desc).trim().toLowerCase();
+    if (rDesc !== desc) return;
+
+    // Apply the change
+    r.acc = source.acc;
+    r.vat = source.vat;
+    propagatedRows.add(`propagated_${r.id}`);
+    const tr = document.getElementById('tr_'+r.id);
+    if (tr) {
+      tr.innerHTML = buildRowHTML(r);
+      if (!r.acc || !r.vat) tr.classList.add('needs-attention');
+      else tr.classList.remove('needs-attention');
+      // Add undo pill
+      showUndoPill(r.id, source.acc, source.vat);
+    }
+  });
+  checkHomeRows();
+}
+
+function showUndoPill(id, prevAcc, prevVat) {
+  const tr = document.getElementById('tr_'+id);
+  if (!tr) return;
+  // Inject a small undo notice into the last cell
+  const lastTd = tr.querySelector('td:last-child');
+  if (!lastTd) return;
+  const pill = document.createElement('div');
+  pill.id = 'undo_'+id;
+  pill.style.cssText = 'font-size:10px;color:var(--blue);cursor:pointer;margin-top:3px;white-space:nowrap;text-decoration:underline;';
+  pill.textContent = 'undo';
+  pill.title = 'Revert this row — keep editing independently';
+  pill.onclick = () => undoPropagate(id, prevAcc, prevVat);
+  lastTd.appendChild(pill);
+  // Auto-remove after 8 seconds
+  setTimeout(() => { pill.remove(); propagatedRows.delete(`propagated_${id}`); }, 8000);
+}
+
+function undoPropagate(id, prevAcc, prevVat) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row.acc = prevAcc;
+  row.vat = prevVat;
+  // Mark as manually broken so future propagations skip it
+  propagatedRows.add(`manual_${id}`);
+  propagatedRows.delete(`propagated_${id}`);
+  const tr = document.getElementById('tr_'+id);
+  if (tr) {
+    tr.innerHTML = buildRowHTML(row);
+    if (!row.acc || !row.vat) tr.classList.add('needs-attention');
+    else tr.classList.remove('needs-attention');
+  }
+  checkHomeRows();
+  updateSummary();
+}
+
+function togglePost(id) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row.post = row.post === 'YES' ? 'NO' : 'YES';
+  const btn = document.getElementById('postBtn_'+id);
+  const tr = document.getElementById('tr_'+id);
+  btn.textContent = row.post;
+  btn.className = 'toggle-post ' + (row.post==='YES'?'yes':'no');
+  tr.classList.toggle('excluded', row.post==='NO');
+  updateSummary();
+  refreshExportBtn();
+}
+
+function toggleHome(id) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row.home = !row.home;
+  const btn = document.getElementById('homeBtn_'+id);
+  btn.className = 'use-home-btn' + (row.home?' active':'');
+  btn.textContent = row.home ? '⌂ ON' : '⌂';
+  updateNet(id);
+  updateSummary();
+}
+
+function isHome213(acc) {
+  return (acc||'').startsWith('213');
+}
+
+function calcNet(gross, bu, home, acc) {
+  let amt = parseFloat(gross) || 0;
+  if (isHome213(acc)) {
+    amt = amt * (getHomePct() / 100);
+  } else {
+    if (bu !== '' && bu !== null) {
+      const buPct = parseFloat(bu);
+      if (!isNaN(buPct)) amt = amt * (buPct / 100);
+    }
+    if (home) {
+      amt = amt * (getHomePct() / 100);
+    }
+  }
+  return amt;
+}
+
+function updateNet(id) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  // Read live values from DOM
+  const grossEl = document.querySelector(`#tr_${id} input[type=number]`);
+  if (grossEl) row.gross = grossEl.value;
+  const buEl = document.querySelector(`#tr_${id} .bu-cell input`);
+  if (buEl) row.bu = buEl.value;
+
+  const gross = parseFloat(row.gross) || 0;
+  const net = calcNet(gross, row.bu, row.home, row.acc);
+  const netAdj = (isHome213(row.acc) || row.bu !== '' || row.home) && net !== gross;
+  const el = document.getElementById('net_'+id);
+  if (el) {
+    el.textContent = isNaN(net) ? '—' : `£${net.toFixed(2)}`;
+    el.className = 'net-amt' + (netAdj?' adjusted':'');
+  }
+  updateSummary();
+}
+
+// ── HOME CALC ────────────────────────────────────────────────────────────────
+
+let homeMethod = 'pct';
+
+function setHomeMethod(method) {
+  homeMethod = method;
+  document.getElementById('hcPctInputs').style.display   = method==='pct'   ? 'grid' : 'none';
+  document.getElementById('hcRoomsInputs').style.display = method==='rooms' ? 'grid' : 'none';
+  document.getElementById('btnPctMethod').classList.toggle('active',   method==='pct');
+  document.getElementById('btnRoomsMethod').classList.toggle('active', method==='rooms');
+  calcHome();
+}
+
+function getHomePct() {
+  if (homeMethod === 'pct') {
+    const homePct = parseFloat(document.getElementById('hcHomePct').value) || 0;
+    const timePct = parseFloat(document.getElementById('hcTimePctA').value) || 0;
+    return (homePct / 100) * timePct;
+  } else {
+    const work  = parseFloat(document.getElementById('hcWorkRooms').value) || 1;
+    const total = parseFloat(document.getElementById('hcRooms').value) || 1;
+    const timePct = parseFloat(document.getElementById('hcTimePctB').value) || 0;
+    return (work / total) * timePct;
+  }
+}
+
+function calcHome() {
+  const pct = getHomePct();
+
+  if (homeMethod === 'pct') {
+    const homePct = parseFloat(document.getElementById('hcHomePct').value) || 0;
+    const timePct = parseFloat(document.getElementById('hcTimePctA').value) || 0;
+    document.getElementById('homePctDisplay').textContent = pct.toFixed(2);
+    document.getElementById('hcEffectiveLine').textContent =
+      `Effective adjustment: ${homePct}% × ${timePct}% = ${pct.toFixed(2)}% of gross amount`;
+  } else {
+    const work  = parseFloat(document.getElementById('hcWorkRooms').value) || 1;
+    const total = parseFloat(document.getElementById('hcRooms').value) || 1;
+    const timePct = parseFloat(document.getElementById('hcTimePctB').value) || 0;
+    document.getElementById('homePctDisplayRooms').textContent = pct.toFixed(2);
+    document.getElementById('hcEffectiveLine').textContent =
+      `Effective adjustment: ${work}/${total} × ${timePct}% = ${pct.toFixed(2)}% of gross amount`;
+  }
+
+  // Refresh all 213 rows
+  rows.forEach(r => { if (isHome213(r.acc)) updateNet(r.id); });
+  updateSummary();
+}
+
+function checkHomeRows() {
+  const hasHome = rows.some(r => r.acc && r.acc.startsWith('213'));
+  const bar = document.getElementById('homeCalcBar');
+  bar.classList.toggle('visible', hasHome);
+}
+
+// ── UI HELPERS ───────────────────────────────────────────────────────────────
+
+// ── SORTING ───────────────────────────────────────────────────────────────────
+
+let sortCol = null;
+let sortDir = 1; // 1 = asc, -1 = desc
+
+function getRowValue(row, col) {
+  if (col === 'gross') return parseFloat(row.gross) || 0;
+  if (col === 'net') {
+    const buEl = document.querySelector(`#tr_${row.id} .bu-cell input`);
+    const bu = buEl ? buEl.value : row.bu;
+    return calcNet(parseFloat(row.gross)||0, bu, row.home, row.acc);
+  }
+  if (col === 'date') return row.date || '';
+  return String(row[col] || '').toLowerCase();
+}
+
+function sortBy(col) {
+  if (sortCol === col) {
+    sortDir *= -1;
+  } else {
+    sortCol = col;
+    sortDir = 1;
+  }
+
+  // Update header indicators
+  document.querySelectorAll('.sort-ind').forEach(el => el.textContent = '');
+  document.querySelectorAll('thead th').forEach(el => el.classList.remove('sort-asc','sort-desc'));
+  const indEl = document.getElementById('si-' + col);
+  const thEl  = document.querySelector(`thead th[data-col="${col}"]`);
+  if (indEl) indEl.textContent = sortDir === 1 ? '▲' : '▼';
+  if (thEl)  thEl.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+
+  rows.sort((a, b) => {
+    const av = getRowValue(a, col);
+    const bv = getRowValue(b, col);
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return  1 * sortDir;
+    return 0;
+  });
+
+  // Re-render tbody in new order
+  const tbody = document.getElementById('expBody');
+  tbody.innerHTML = '';
+  rows.forEach(r => renderRow(r));
+}
+
+function showTable() {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('summaryBar').style.display = 'grid';
+  updateUI();
+}
+
+function updateUI() {
+  updateSummary();
+  refreshExportBtn();
+  document.getElementById('rowCount').textContent = rows.length + ' row' + (rows.length!==1?'s':'');
+}
+
+function updateSummary() {
+  let posted=0, excl=0, gross=0, net=0;
+  rows.forEach(r => {
+    if (r.post==='NO') { excl++; return; }
+    posted++;
+    const g = parseFloat(r.gross)||0;
+    gross += g;
+    // Read live bu from DOM
+    const buEl = document.querySelector(`#tr_${r.id} .bu-cell input`);
+    const bu = buEl ? buEl.value : r.bu;
+    net += calcNet(g, bu, r.home, r.acc);
+  });
+  document.getElementById('statPost').textContent = posted;
+  document.getElementById('statExcl').textContent = excl;
+  document.getElementById('statGross').textContent = '£'+gross.toFixed(2);
+  document.getElementById('statNet').textContent = '£'+net.toFixed(2);
+}
+
+function refreshExportBtn() {
+  const btn = document.getElementById('exportBtn');
+  const active = rows.some(r => r.post==='YES');
+  btn.disabled = !active;
+  document.getElementById('exportNote').textContent = active
+    ? rows.filter(r=>r.post==='YES').length + ' rows will be exported'
+    : '';
+}
+
+function getInitials(name) {
+  return (name||'').trim().split(/\s+/).map(w=>w[0]||'').join('').toUpperCase()||'EXP';
+}
+
+function getPrefix() {
+  const name = document.getElementById('clientName').value.trim();
+  const quarter = document.getElementById('quarter').value;
+  const year = document.getElementById('yearInput').value.trim();
+  if (!name || !year) return '';
+  return getInitials(name)+'-Exp-QE-'+quarter+'-'+year;
+}
+
+// invoice numbers generated silently on export via getPrefix()
+
+function setAlert(msg, type) {
+  const el = document.getElementById('mainAlert');
+  el.textContent = msg;
+  el.className = 'alert show alert-' + (type||'info');
+}
+
+function clearAll() {
+  if (rows.length > 0 && !confirm('Clear all rows and start again?')) return;
+  rows = []; nextId = 0;
+  document.getElementById('expBody').innerHTML = '';
+  document.getElementById('expTable').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'block';
+  document.getElementById('summaryBar').style.display = 'none';
+  document.getElementById('homeCalcBar').classList.remove('visible');
+  setAlert('All rows cleared. Drop a new file or add rows manually.', 'info');
+  refreshExportBtn();
+}
+
+// ── EXPORT ───────────────────────────────────────────────────────────────────
+
+function fmtDate(dateStr) {
+  // Convert YYYY-MM-DD to DD/MM/YYYY for Xero
+  if (!dateStr) return '';
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return dateStr;
+}
+
+function exportCSV() {
+  const client = document.getElementById('clientName').value.trim() || 'Client';
+  const prefix = getPrefix() || 'EXP';
+  const defDate = '';
+  const defDue  = '';
+
+  const headers = ['*ContactName','*InvoiceNumber','*InvoiceDate','*DueDate',
+                   '*Description','*Quantity','*UnitAmount','*AccountCode','*TaxType','TaxAmount'];
+  const lines = [headers.join(',')];
+
+  let seq = 1;
+  rows.forEach(r => {
+    if (r.post !== 'YES') return;
+
+    // Read live values from DOM
+    const grossEl = document.querySelector(`#tr_${r.id} input[type=number]`);
+    const buEl    = document.querySelector(`#tr_${r.id} .bu-cell input`);
+    const descEl  = document.querySelector(`#tr_${r.id} td:nth-child(7) input`);
+    const supEl   = document.querySelector(`#tr_${r.id} td:nth-child(6) input`);
+    const dateEl  = document.querySelector(`#tr_${r.id} input[type=date]`);
+    const refEl   = document.querySelector(`#tr_${r.id} td:nth-child(4) input`);
+    const accEl   = document.querySelector(`#tr_${r.id} td:nth-child(2) select`);
+    const vatEl   = document.querySelector(`#tr_${r.id} td:nth-child(3) select`);
+
+    const gross  = parseFloat(grossEl?.value || r.gross) || 0;
+    const bu     = buEl?.value !== '' ? buEl?.value : r.bu;
+    const accFull= accEl?.value || r.acc;
+    const accCode= (accFull||'').split(' - ')[0];
+    const net    = calcNet(gross, bu, r.home, accFull);
+    const desc   = descEl?.value || r.desc;
+    const sup    = supEl?.value  || r.supplier || client;
+    const dateStr= fmtDate(dateEl?.value || r.date) || defDate;
+    const dueStr = defDue || dateStr;
+    const ref    = refEl?.value || r.ref || `${prefix}-${seq}`;
+    const vat    = vatEl?.value || r.vat;
+
+    // Build description with BU annotation
+    let descOut = desc;
+    if (isHome213(accFull)) {
+      descOut += ` @ ${getHomePct().toFixed(2)}% business use (home)`;
+    } else {
+      if (bu !== '' && bu !== null && parseFloat(bu) !== 100) {
+        descOut += ` @ ${parseFloat(bu).toFixed(0)}% business use`;
+      }
+      if (r.home) {
+        descOut += ` @ ${getHomePct().toFixed(2)}% home office`;
+      }
+    }
+
+    const row = [
+      csvEsc(sup),
+      csvEsc(ref),
+      dateStr,
+      dueStr,
+      csvEsc(descOut),
+      '1',
+      net.toFixed(2),
+      accCode,
+      csvEsc(vat),
+      '',
+    ];
+    lines.push(row.join(','));
+    seq++;
+  });
+
+  const blob = new Blob([lines.join('\r\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const fname = `xero_expenses_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = fname;
+  a.click();
+  setAlert(`✓ Exported ${seq-1} row${seq-1!==1?'s':''} to ${fname}`, 'success');
+}
+
+function csvEsc(val) {
+  const s = String(val||'');
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g,'""')}"` : s;
+}
+
+// ── DROP ZONE ────────────────────────────────────────────────────────────────
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+function routeFile(file) {
+  if (!file) return;
+  if (file.name.toLowerCase().endsWith('.msg')) {
+    parseMsgFile(file);
+  } else {
+    parseFile(file);
+  }
+}
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  routeFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  routeFile(e.target.files[0]);
+  if (file) parseFile(file);
+});
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+calcHome();
+
+// Set current year as default
+document.getElementById('yearInput').value = new Date().getFullYear();
+
+// Set quarter to current quarter end
+const qMap = {0:'Mar',1:'Mar',2:'Mar',3:'Jun',4:'Jun',5:'Jun',6:'Sep',7:'Sep',8:'Sep',9:'Dec',10:'Dec',11:'Dec'};
+document.getElementById('quarter').value = qMap[new Date().getMonth()];
+
+refreshExportBtn();
+</script>
+</body>
+</html>
