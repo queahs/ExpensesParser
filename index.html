@@ -513,13 +513,38 @@
     border-color: var(--text);
     background: #fff;
   }
+
+  /* ── EXPORT TYPE TOGGLE ── */
+  .export-type-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .export-type-toggle button {
+    padding: 9px 16px;
+    border: none;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border-right: 1px solid var(--border);
+  }
+  .export-type-toggle button:last-child { border-right: none; }
+  .export-type-toggle button.active {
+    background: var(--text);
+    color: #fff;
+  }
 </style>
 </head>
 <body>
 
 <header>
   <h1>⬡ EXPENSE PARSER</h1>
-  <span>BARRISTER EXPENSES → XERO CSV</span>
+  <span>EXPENSES → XERO CSV</span>
 </header>
 
 <div class="main">
@@ -534,7 +559,7 @@
     <input type="file" id="fileInput" accept=".xlsx,.xls,.msg">
     <div class="drop-icon">📂</div>
     <h2>Drop file here</h2>
-    <p>Client expense template (.xlsx) — or drag an Outlook email (.msg) to extract expenses automatically</p>
+    <p>Client expense template (.xlsx) — barrister or property rental — or drag an Outlook email (.msg) to extract expenses automatically</p>
   </div>
 
   <!-- EMAIL PASTE -->
@@ -553,7 +578,7 @@
   <!-- SETTINGS -->
   <div class="settings-bar">
     <div class="field">
-      <label>Full name (ContactName)</label>
+      <label>Full name (ContactName / Payee)</label>
       <input type="text" id="clientName" placeholder="e.g. John Smith" oninput="refreshExportBtn()">
     </div>
     <div class="field">
@@ -645,7 +670,7 @@
           <th style="min-width:160px" onclick="sortBy('vat')" class="sortable" data-col="vat">VAT Rate <span class="sort-ind" id="si-vat"></span></th>
           <th style="min-width:90px" onclick="sortBy('ref')" class="sortable" data-col="ref">Ref <span class="sort-ind" id="si-ref"></span></th>
           <th style="min-width:110px" onclick="sortBy('date')" class="sortable" data-col="date">Date <span class="sort-ind" id="si-date"></span></th>
-          <th style="min-width:110px" onclick="sortBy('supplier')" class="sortable" data-col="supplier">Supplier <span class="sort-ind" id="si-supplier"></span></th>
+          <th style="min-width:110px" onclick="sortBy('supplier')" class="sortable" data-col="supplier">Supplier / Property <span class="sort-ind" id="si-supplier"></span></th>
           <th style="min-width:140px" onclick="sortBy('desc')" class="sortable" data-col="desc">Description <span class="sort-ind" id="si-desc"></span></th>
           <th style="width:90px" onclick="sortBy('gross')" class="sortable" data-col="gross">Gross £ <span class="sort-ind" id="si-gross"></span></th>
           <th style="width:120px">% BU</th>
@@ -680,6 +705,10 @@
 
   <!-- EXPORT -->
   <div class="export-bar">
+    <div class="export-type-toggle" id="exportTypeToggle">
+      <button class="active" id="btnExportBills" onclick="setExportType('bills')">Bills CSV</button>
+      <button id="btnExportBank" onclick="setExportType('bank')">Bank Statement CSV</button>
+    </div>
     <button class="btn btn-primary" id="exportBtn" onclick="exportCSV()" disabled>
       ↓ Download Xero CSV
     </button>
@@ -718,7 +747,13 @@ const ACCOUNTS = [
   {code:'401', name:'Devilling and professional assistance'},
   {code:'402', name:'Advertising & Marketing'},
   {code:'403', name:'Administrative or secretarial assistance'},
-  {code:'410', name:'Rental expenses'},
+  {code:'470', name:'Property expenses - general'},
+  {code:'471', name:'Property rates, insurance, and ground rents'},
+  {code:'472', name:'Property repairs and maintenance'},
+  {code:'473', name:'Property legal management and professional fees'},
+  {code:'474', name:'Property replacement of domestic items'},
+  {code:'475', name:'Property mortgage interest - residential'},
+  {code:'476', name:'Property mortgage interest - commercial'},
   {code:'500', name:'Computer hardware'},
   {code:'501', name:'Office furniture'},
   {code:'502', name:'Wig and gown'},
@@ -734,6 +769,10 @@ const VAT_DEFAULTS = {
   '202':'5% (VAT on Expenses)',  '203':'Exempt Expenses',
   '204':'Zero Rated Expenses',   '205':'No VAT',
   '301':'Zero Rated Expenses',
+  '470':'20% (VAT on Expenses)', '471':'12.5% (VAT on Expenses)',
+  '472':'5% (VAT on Expenses)',  '473':'Exempt Expenses',
+  '474':'Zero Rated Expenses',   '475':'No VAT',
+  '476':'No VAT',
 };
 
 const VAT_RATES = [
@@ -743,6 +782,7 @@ const VAT_RATES = [
 
 let rows = [];
 let nextId = 0;
+let exportType = 'bills'; // 'bills' or 'bank'
 
 // ── ACCOUNT / VAT HELPERS ────────────────────────────────────────────────────
 
@@ -799,7 +839,8 @@ function parseFile(file) {
       const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:false, dateNF:'yyyy-mm-dd'});
 
       // Row 0 = title, Row 1 = headers, data from row 2 onward
-      // Cols: A=Post? B=TypeOfExpense C=VATRate D=PostType E=Reference F=Date G=Supplier H=Description I=GrossAmount
+      // Cols: A=Post? B=TypeOfExpense C=VATRate D=PostType(hidden,unused) E=Reference F=Date G=Supplier/PropertyName H=Description I=GrossAmount
+      // Same column layout is shared by both the barrister template and the property rental template.
       let imported = 0;
       rows = [];
       nextId = 0;
@@ -880,14 +921,29 @@ function parseMsgFile(file) {
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
-      // .msg files are OLE Compound Document format (binary)
-      // Extract readable text by scanning for UTF-16 and ASCII text runs
-      const buf = e.target.result;
-      const bytes = new Uint8Array(buf);
-      const text = extractMsgText(bytes);
+      const bytes = new Uint8Array(e.target.result);
+      let text = '';
+
+      // Primary method: properly parse the .msg OLE/CFB container structure
+      // (Outlook .msg files store the body as a named property stream, e.g.
+      // "__substg1.0_1000001F" for unicode body or "...001E" for ANSI body).
+      // We reuse the CFB parser already bundled inside the XLSX library
+      // rather than scanning raw bytes for text-looking runs, which was unreliable.
+      try {
+        const cfb = XLSX.CFB.parse(bytes);
+        text = extractMsgBodyFromCFB(cfb);
+      } catch (cfbErr) {
+        text = '';
+      }
+
+      // Fallback: old heuristic byte-scan, only used if CFB parsing fails
+      // (e.g. a corrupted file or one that isn't really a valid .msg container)
+      if (!text || text.trim().length < 10) {
+        text = extractMsgText(bytes);
+      }
 
       if (!text || text.trim().length < 10) {
-        setAlert('Could not read email content. Try copying the email body and pasting it in the text box below instead.', 'warn');
+        setAlert('Could not read email content from this .msg file. Try copying the email body and pasting it in the text box below instead.', 'warn');
         return;
       }
 
@@ -900,6 +956,26 @@ function parseMsgFile(file) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+function extractMsgBodyFromCFB(cfb) {
+  // PidTagBody (0x1000) as PT_UNICODE (0x001F) — the standard plain-text body stream
+  let entry = XLSX.CFB.find(cfb, '__substg1.0_1000001F');
+  if (entry && entry.content && entry.content.length) {
+    return decodeMsgStream(entry.content, true);
+  }
+  // Fallback: PidTagBody as PT_STRING8 / ANSI (0x001E)
+  entry = XLSX.CFB.find(cfb, '__substg1.0_1000001E');
+  if (entry && entry.content && entry.content.length) {
+    return decodeMsgStream(entry.content, false);
+  }
+  return '';
+}
+
+function decodeMsgStream(content, isUnicode) {
+  const bytes = content instanceof Uint8Array ? content : new Uint8Array(content);
+  const decoder = new TextDecoder(isUnicode ? 'utf-16le' : 'windows-1252', { fatal: false });
+  return decoder.decode(bytes).replace(/\u0000+$/, '').trim();
 }
 
 function extractMsgText(bytes) {
@@ -1122,7 +1198,7 @@ function buildRowHTML(row) {
     <td><select onchange="onVatChange(${id},this.value)">${vatOptions(row.vat)}</select></td>
     <td><input type="text" value="${esc(row.ref)}" onchange="setField(${id},'ref',this.value)" placeholder="Ref"></td>
     <td><input type="date" value="${row.date||''}" onchange="setField(${id},'date',this.value)"></td>
-    <td><input type="text" value="${esc(row.supplier)}" onchange="setField(${id},'supplier',this.value)" placeholder="Supplier"></td>
+    <td><input type="text" value="${esc(row.supplier)}" onchange="setField(${id},'supplier',this.value)" placeholder="Supplier / Property"></td>
     <td><input type="text" value="${esc(row.desc)}" onchange="setField(${id},'desc',this.value)" placeholder="Description"></td>
     <td><input type="number" step="0.01" value="${row.gross!==''?row.gross:''}" onchange="setField(${id},'gross',this.value);updateNet(${id})" onkeyup="updateNet(${id})" placeholder="0.00"></td>
     <td class="no-strike">
@@ -1137,8 +1213,8 @@ function buildRowHTML(row) {
     </td>
     <td class="no-strike">
       ${isHome213(row.acc)
-        ? `<span class="use-home-btn active" style="cursor:default;opacity:0.7" title="Home proportion applied automatically">⌂ AUTO</span>`
-        : `<button class="use-home-btn${row.home?' active':''}" id="homeBtn_${id}" onclick="toggleHome(${id})" title="Apply home office proportion">${row.home?'⌂ ON':'⌂'}</button>`
+        ? `<span class="use-home-btn active" style="cursor:default;opacity:0.7" title="Home proportion applied automatically: ${getHomePct().toFixed(2)}% of gross">⌂ AUTO</span>`
+        : `<button class="use-home-btn${row.home?' active':''}" id="homeBtn_${id}" onclick="toggleHome(${id})" title="${row.home ? 'Applying ' + getHomePct().toFixed(2) + '% (from the Use of Home calculator above) — click to remove' : 'Click to apply the Use of Home business proportion (' + getHomePct().toFixed(2) + '%, set in the calculator above) to this row'}">${row.home?'⌂ ON':'⌂'}</button>`
       }
     </td>
     <td class="no-strike">
@@ -1311,6 +1387,7 @@ function toggleHome(id) {
   const btn = document.getElementById('homeBtn_'+id);
   btn.className = 'use-home-btn' + (row.home?' active':'');
   btn.textContent = row.home ? '⌂ ON' : '⌂';
+  checkHomeRows();
   updateNet(id);
   updateSummary();
 }
@@ -1405,9 +1482,21 @@ function calcHome() {
 }
 
 function checkHomeRows() {
-  const hasHome = rows.some(r => r.acc && r.acc.startsWith('213'));
+  const hasHome = rows.some(r => (r.acc && r.acc.startsWith('213')) || r.home);
   const bar = document.getElementById('homeCalcBar');
   bar.classList.toggle('visible', hasHome);
+}
+
+function refreshRefPlaceholders() {
+  const prefix = getPrefix() || 'EXP';
+  let seq = 1;
+  rows.forEach(r => {
+    const inp = document.querySelector(`#tr_${r.id} td:nth-child(4) input`);
+    if (!inp) return;
+    if (r.post !== 'YES') { inp.placeholder = 'Ref'; return; }
+    inp.placeholder = `${prefix}-${seq}`;
+    seq++;
+  });
 }
 
 // ── UI HELPERS ───────────────────────────────────────────────────────────────
@@ -1460,6 +1549,7 @@ function sortBy(col) {
 
 function showTable() {
   document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('expTable').style.display = 'table';
   document.getElementById('summaryBar').style.display = 'grid';
   updateUI();
 }
@@ -1467,6 +1557,7 @@ function showTable() {
 function updateUI() {
   updateSummary();
   refreshExportBtn();
+  refreshRefPlaceholders();
   document.getElementById('rowCount').textContent = rows.length + ' row' + (rows.length!==1?'s':'');
 }
 
@@ -1495,6 +1586,7 @@ function refreshExportBtn() {
   document.getElementById('exportNote').textContent = active
     ? rows.filter(r=>r.post==='YES').length + ' rows will be exported'
     : '';
+  refreshRefPlaceholders();
 }
 
 function getInitials(name) {
@@ -1529,6 +1621,17 @@ function clearAll() {
   refreshExportBtn();
 }
 
+// ── EXPORT TYPE TOGGLE ─────────────────────────────────────────────────────────
+
+function setExportType(type) {
+  exportType = type;
+  document.getElementById('btnExportBills').classList.toggle('active', type==='bills');
+  document.getElementById('btnExportBank').classList.toggle('active', type==='bank');
+  const btn = document.getElementById('exportBtn');
+  btn.innerHTML = type==='bills' ? '↓ Download Xero CSV (Bills)' : '↓ Download Xero CSV (Bank Statement)';
+  refreshExportBtn();
+}
+
 // ── EXPORT ───────────────────────────────────────────────────────────────────
 
 function fmtDate(dateStr) {
@@ -1540,6 +1643,14 @@ function fmtDate(dateStr) {
 }
 
 function exportCSV() {
+  if (exportType === 'bank') {
+    exportBankCSV();
+  } else {
+    exportBillsCSV();
+  }
+}
+
+function exportBillsCSV() {
   const client = document.getElementById('clientName').value.trim() || 'Client';
   const prefix = getPrefix() || 'EXP';
   const defDate = '';
@@ -1607,10 +1718,80 @@ function exportCSV() {
   const blob = new Blob([lines.join('\r\n')], {type:'text/csv'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  const fname = `xero_expenses_${new Date().toISOString().slice(0,10)}.csv`;
+  const fname = `xero_bills_${new Date().toISOString().slice(0,10)}.csv`;
   a.download = fname;
   a.click();
-  setAlert(`✓ Exported ${seq-1} row${seq-1!==1?'s':''} to ${fname}`, 'success');
+  setAlert(`✓ Exported ${seq-1} row${seq-1!==1?'s':''} to ${fname} (Bills import)`, 'success');
+}
+
+function exportBankCSV() {
+  const client = document.getElementById('clientName').value.trim() || 'Client';
+  const prefix = getPrefix() || 'EXP';
+
+  // Xero precoded bank statement import columns: Date, Amount, Payee, Description, Reference, Account Code, Tax Rate
+  const headers = ['Date','Amount','Payee','Description','Reference','Account Code','Tax Rate'];
+  const lines = [headers.join(',')];
+
+  let seq = 1;
+  rows.forEach(r => {
+    if (r.post !== 'YES') return;
+
+    const grossEl = document.querySelector(`#tr_${r.id} input[type=number]`);
+    const buEl    = document.querySelector(`#tr_${r.id} .bu-cell input`);
+    const descEl  = document.querySelector(`#tr_${r.id} td:nth-child(7) input`);
+    const supEl   = document.querySelector(`#tr_${r.id} td:nth-child(6) input`);
+    const dateEl  = document.querySelector(`#tr_${r.id} input[type=date]`);
+    const refEl   = document.querySelector(`#tr_${r.id} td:nth-child(4) input`);
+    const accEl   = document.querySelector(`#tr_${r.id} td:nth-child(2) select`);
+    const vatEl   = document.querySelector(`#tr_${r.id} td:nth-child(3) select`);
+
+    const gross  = parseFloat(grossEl?.value || r.gross) || 0;
+    const bu     = buEl?.value !== '' ? buEl?.value : r.bu;
+    const accFull= accEl?.value || r.acc;
+    const accCode= (accFull||'').split(' - ')[0];
+    const net    = calcNet(gross, bu, r.home, accFull);
+    const desc   = descEl?.value || r.desc;
+    const sup    = supEl?.value  || r.supplier || client;
+    const dateStr= fmtDate(dateEl?.value || r.date);
+    const ref    = refEl?.value || r.ref || `${prefix}-${seq}`;
+    const vat    = vatEl?.value || r.vat;
+
+    // Build description with BU annotation
+    let descOut = desc;
+    if (isHome213(accFull)) {
+      descOut += ` @ ${getHomePct().toFixed(2)}% business use (home)`;
+    } else {
+      if (bu !== '' && bu !== null && parseFloat(bu) !== 100) {
+        descOut += ` @ ${parseFloat(bu).toFixed(0)}% business use`;
+      }
+      if (r.home) {
+        descOut += ` @ ${getHomePct().toFixed(2)}% home office`;
+      }
+    }
+
+    // Bank statement expenses are shown as negative amounts (money out)
+    const amountOut = (-Math.abs(net)).toFixed(2);
+
+    const row = [
+      dateStr,
+      amountOut,
+      csvEsc(sup),
+      csvEsc(descOut),
+      csvEsc(ref),
+      accCode,
+      csvEsc(vat),
+    ];
+    lines.push(row.join(','));
+    seq++;
+  });
+
+  const blob = new Blob([lines.join('\r\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const fname = `xero_bank_statement_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = fname;
+  a.click();
+  setAlert(`✓ Exported ${seq-1} row${seq-1!==1?'s':''} to ${fname} (Bank Statement import — expenses shown as negative amounts). Use Xero's "Import a Statement" on the relevant bank account, and map the Account Code / Tax Rate columns during import to auto-reconcile.`, 'success');
 }
 
 function csvEsc(val) {
@@ -1642,7 +1823,6 @@ dropZone.addEventListener('drop', e => {
 });
 fileInput.addEventListener('change', e => {
   routeFile(e.target.files[0]);
-  if (file) parseFile(file);
 });
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
