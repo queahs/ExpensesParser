@@ -872,7 +872,13 @@ function parseFile(file) {
       else if (wb.SheetNames.includes('MTD Template')) wsName = 'MTD Template';
       else wsName = wb.SheetNames[0];
       const ws = wb.Sheets[wsName];
-      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:false, dateNF:'yyyy-mm-dd'});
+      // raw:true (with cellDates:true above) returns genuine Date objects for date
+      // cells and plain numbers for numeric cells, instead of locale-formatted
+      // display strings. This matters because some templates render dates as
+      // "DD/MM/YYYY" while others (e.g. the legacy "MTD Template") render the same
+      // underlying date as US-style "M/D/YY" — parsing the formatted string was
+      // ambiguous and silently dropped dates from that legacy format.
+      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
 
       // Header row position varies by template — locate it dynamically rather
       // than assuming a fixed row, then start reading data from the row after it.
@@ -893,7 +899,8 @@ function parseFile(file) {
       for (let i = headerRowIdx + 1; i < data.length; i++) {
         const r = data[i];
         if (!r || r.every(v => !v)) continue;
-        const gross = parseFloat(String(r[8]||'').replace(/[£,]/g,''));
+        const grossRaw = r[8];
+        const gross = typeof grossRaw === 'number' ? grossRaw : parseFloat(String(grossRaw||'').replace(/[£,]/g,''));
         if (!gross && !r[7] && !r[6]) continue; // skip fully empty
 
         const accRaw = String(r[1]||'').trim();
@@ -920,14 +927,20 @@ function parseFile(file) {
 
         const dateRaw = r[5];
         let dateISO = '';
-        if (dateRaw) {
-          // Try numeric serial first
-          const num = parseFloat(dateRaw);
-          if (!isNaN(num) && num > 40000) {
-            const d = new Date(Math.round((num - 25569) * 86400 * 1000));
+        if (dateRaw instanceof Date && !isNaN(dateRaw.getTime())) {
+          // Genuine Excel date cell — read the underlying date directly rather than
+          // a formatted display string, which sidesteps DD/MM vs MM/DD ambiguity.
+          dateISO = dateRaw.toISOString().slice(0,10);
+        } else if (dateRaw !== null && dateRaw !== undefined && dateRaw !== '') {
+          if (typeof dateRaw === 'number') {
+            // Raw Excel serial date number
+            const d = new Date(Math.round((dateRaw - 25569) * 86400 * 1000));
             dateISO = d.toISOString().slice(0,10);
           } else {
-            dateISO = excelDateToISO(dateRaw);
+            // Cell stored as plain text rather than an Excel date — fall back to
+            // string parsing (assumes DD/MM/YYYY, the convention used when staff
+            // type dates manually).
+            dateISO = excelDateToISO(String(dateRaw));
           }
         }
 
