@@ -1298,25 +1298,59 @@ function setField(id, field, val) {
 
 function propagateBU(id, val) {
   const source = rows.find(r => r.id === id);
-  if (!source || !source.acc.startsWith('203')) return;
+  if (!source) return;
+  if (isHome213(source.acc)) return; // Use of Home rows don't use % BU — the home calculator handles those
   const supplier = (source.supplier || '').trim().toLowerCase();
   if (!supplier) return;
 
   rows.forEach(r => {
     if (r.id === id) return;
-    if (!r.acc.startsWith('203')) return;
-    const rSupplier = (r.supplier || '').trim().toLowerCase();
-    // Also read live supplier from DOM in case it was edited
+    if (isHome213(r.acc)) return; // BU input is disabled for these rows
+    // Don't override if user has already manually broken this row free from BU propagation
+    if (propagatedRows.has(`manual_bu_${r.id}`)) return;
     const supEl = document.querySelector(`#tr_${r.id} td:nth-child(6) input`);
-    const domSupplier = supEl ? supEl.value.trim().toLowerCase() : rSupplier;
+    const domSupplier = (supEl ? supEl.value : (r.supplier || '')).trim().toLowerCase();
     if (domSupplier !== supplier) return;
+
+    const buEl = document.querySelector(`#tr_${r.id} .bu-cell input`);
+    const prevBu = buEl ? buEl.value : r.bu;
+    if (prevBu === val) return; // already the same, nothing to do or undo
 
     // Apply same BU
     r.bu = val;
-    const buEl = document.querySelector(`#tr_${r.id} .bu-cell input`);
     if (buEl) buEl.value = val;
     updateNet(r.id);
+    propagatedRows.add(`propagated_bu_${r.id}`);
+    showUndoPillBU(r.id, prevBu);
   });
+}
+
+function showUndoPillBU(id, prevBu) {
+  const tr = document.getElementById('tr_'+id);
+  if (!tr) return;
+  const lastTd = tr.querySelector('td:last-child');
+  if (!lastTd) return;
+  const existing = document.getElementById('undoBu_'+id);
+  if (existing) existing.remove();
+  const pill = document.createElement('div');
+  pill.id = 'undoBu_'+id;
+  pill.style.cssText = 'font-size:10px;color:var(--blue);cursor:pointer;margin-top:3px;white-space:nowrap;text-decoration:underline;';
+  pill.textContent = 'undo % BU';
+  pill.title = 'Revert this row\'s % BU — keep editing independently';
+  pill.onclick = () => undoPropagateBU(id, prevBu);
+  lastTd.appendChild(pill);
+  setTimeout(() => { pill.remove(); propagatedRows.delete(`propagated_bu_${id}`); }, 8000);
+}
+
+function undoPropagateBU(id, prevBu) {
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  row.bu = prevBu;
+  propagatedRows.add(`manual_bu_${id}`);
+  propagatedRows.delete(`propagated_bu_${id}`);
+  const buEl = document.querySelector(`#tr_${id} .bu-cell input`);
+  if (buEl) buEl.value = prevBu;
+  updateNet(id);
 }
 
 function onAccChange(id, val) {
