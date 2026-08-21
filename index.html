@@ -829,23 +829,58 @@ function excelDateToISO(val) {
   return '';
 }
 
+function findHeaderRowIndex(data) {
+  // Locate the header row dynamically instead of assuming it's always row index 1.
+  // The current tall template has headers on row index 1 (Excel row 2), but legacy
+  // templates (e.g. the "MTD Template" DataDear/Xero format) bury the header several
+  // rows down (e.g. Excel row 6) after title/notes rows.
+  const scanLimit = Math.min(data.length, 25);
+  for (let i = 0; i < scanLimit; i++) {
+    const r = data[i];
+    if (!r) continue;
+    const colA = String(r[0]||'').trim().toLowerCase();
+    const colB = String(r[1]||'').trim().toLowerCase();
+    if (colA.startsWith('post') && colB.includes('account')) {
+      return i;
+    }
+  }
+  return 1; // fallback to the standard tall-template assumption
+}
+
+function stripLegacyVatSuffix(vatRaw) {
+  // Legacy "MTD Template" format appends a trailing percentage in parentheses,
+  // e.g. "20% (VAT on Expenses) (20%)" or "No VAT (0%)" — strip that suffix so
+  // the value matches our known VAT_RATES list exactly.
+  return String(vatRaw||'').replace(/\s*\(\d+(\.\d+)?%\)\s*$/, '').trim();
+}
+
 function parseFile(file) {
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
       const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
-      const wsName = wb.SheetNames.includes('Expenses') ? 'Expenses' : wb.SheetNames[0];
+      // Sheet selection priority: current tall template ("Expenses") first,
+      // then the legacy "MTD Template" (DataDear/Xero) sheet, then fall back
+      // to whatever sheet is first in the workbook.
+      let wsName;
+      if (wb.SheetNames.includes('Expenses')) wsName = 'Expenses';
+      else if (wb.SheetNames.includes('MTD Template')) wsName = 'MTD Template';
+      else wsName = wb.SheetNames[0];
       const ws = wb.Sheets[wsName];
       const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:false, dateNF:'yyyy-mm-dd'});
 
-      // Row 0 = title, Row 1 = headers, data from row 2 onward
+      // Header row position varies by template — locate it dynamically rather
+      // than assuming a fixed row, then start reading data from the row after it.
       // Cols: A=Post? B=TypeOfExpense C=VATRate D=PostType(hidden,unused) E=Reference F=Date G=Supplier/PropertyName H=Description I=GrossAmount
-      // Same column layout is shared by both the barrister template and the property rental template.
+      // Same column layout is shared by the barrister template, the property rental template,
+      // and the legacy "MTD Template" format — only the header row position and VAT text differ.
+      const headerRowIdx = findHeaderRowIndex(data);
       let imported = 0;
+      let vatDefaultedCount = 0;
       rows = [];
       nextId = 0;
 
-      for (let i = 2; i < data.length; i++) {
+      for (let i = headerRowIdx + 1; i < data.length; i++) {
         const r = data[i];
         if (!r || r.every(v => !v)) continue;
         const gross = parseFloat(String(r[8]||'').replace(/[£,]/g,''));
@@ -863,10 +898,15 @@ function parseFile(file) {
           // if no numeric code prefix at all, leave blank — client left it empty or typed something invalid
         }
 
-        const vatRaw = String(r[2]||'').trim();
+        const vatRaw = stripLegacyVatSuffix(r[2]);
         // Use exactly what the client provided — match to our VAT list, blank if unrecognised
         const vatMatch = VAT_RATES.find(v => v.toLowerCase() === vatRaw.toLowerCase());
-        const vat = vatMatch || ''; // blank if not a recognised VAT rate
+        // If the file didn't supply a usable VAT rate but we do know the account,
+        // fall back to the same account-based default used when a user picks an
+        // account manually from the dropdown (see onAccChange/defaultVat) — this
+        // keeps behaviour consistent whether VAT is filled during import or by hand.
+        const vat = vatMatch || (accFull ? defaultVat(accFull) : '');
+        const vatWasDefaulted = !vatMatch && !!accFull;
 
         const dateRaw = r[5];
         let dateISO = '';
@@ -894,13 +934,16 @@ function parseFile(file) {
           home: false,
         });
         imported++;
+        if (vatWasDefaulted) vatDefaultedCount++;
       }
 
       const blankAcc = rows.filter(r => !r.acc).length;
       const blankVat = rows.filter(r => !r.vat).length;
-      let alertMsg = `✓ Imported ${imported} row${imported!==1?'s':''} from "${file.name}".`;
+      let alertMsg = `✓ Imported ${imported} row${imported!==1?'s':''} from "${file.name}"${wsName==='MTD Template'?' (legacy MTD Template format detected)':''}.`;
       if (blankAcc || blankVat) {
         alertMsg += ` ${blankAcc+blankVat} field${blankAcc+blankVat!==1?'s need':' needs'} attention — rows with missing account or VAT rate are highlighted.`;
+      } else if (vatDefaultedCount) {
+        alertMsg += ` ${vatDefaultedCount} row${vatDefaultedCount!==1?'s':''} had no VAT rate in the file — defaulted based on account code; please double-check before exporting.`;
       } else {
         alertMsg += ` Review % BU and home proportion as needed, then export.`;
       }
