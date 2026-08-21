@@ -360,6 +360,11 @@
     border-color: #b0c4f0;
     color: var(--blue);
   }
+  .use-home-btn.unadjusted {
+    background: var(--amber-bg);
+    border-color: #e8c97a;
+    color: var(--amber);
+  }
 
   .net-amt {
     font-family: 'IBM Plex Mono', monospace;
@@ -879,6 +884,11 @@ function parseFile(file) {
       let vatDefaultedCount = 0;
       rows = [];
       nextId = 0;
+      // Clear any rows already rendered from a previous import — resetting the
+      // `rows` array alone doesn't remove existing <tr> elements from the DOM,
+      // which otherwise left old data visible alongside the newly imported rows.
+      document.getElementById('expBody').innerHTML = '';
+      propagatedRows.clear();
 
       for (let i = headerRowIdx + 1; i < data.length; i++) {
         const r = data[i];
@@ -1229,9 +1239,10 @@ function renderRow(row) {
 function buildRowHTML(row) {
   const id = row.id;
   const gross = row.gross !== '' ? parseFloat(row.gross) : 0;
-  const net = calcNet(gross, row.bu, row.home, row.acc);
+  const net = calcNet(gross, row.bu, row.home, row.acc, row.vat);
   const netAdj = (isHome213(row.acc) || row.bu !== '' || row.home) && net !== gross;
   const netStr = isNaN(net) ? '—' : `£${net.toFixed(2)}`;
+  const homeAdjApplies = isHome213(row.acc) && homeAdjustmentApplies(row.vat);
   return `
     <td class="no-strike">
       <button class="toggle-post ${row.post==='YES'?'yes':'no'}" id="postBtn_${id}"
@@ -1256,7 +1267,7 @@ function buildRowHTML(row) {
     </td>
     <td class="no-strike">
       ${isHome213(row.acc)
-        ? `<span class="use-home-btn active" style="cursor:default;opacity:0.7" title="Home proportion applied automatically: ${getHomePct().toFixed(2)}% of gross">⌂ AUTO</span>`
+        ? `<span class="use-home-btn active${homeAdjApplies ? '' : ' unadjusted'}" style="cursor:default;opacity:0.85" title="${homeAdjApplies ? 'Home proportion applied automatically: ' + getHomePct().toFixed(2) + '% of gross' : 'VAT rate is not 5%, 12.5%, or 20% — Use of Home figure kept at full gross amount (no proportion applied)'}">${homeAdjApplies ? '⌂ AUTO' : '⌂ FULL'}</span>`
         : `<button class="use-home-btn${row.home?' active':''}" id="homeBtn_${id}" onclick="toggleHome(${id})" title="${row.home ? 'Applying ' + getHomePct().toFixed(2) + '% (from the Use of Home calculator above) — click to remove' : 'Click to apply the Use of Home business proportion (' + getHomePct().toFixed(2) + '%, set in the calculator above) to this row'}">${row.home?'⌂ ON':'⌂'}</button>`
       }
     </td>
@@ -1334,7 +1345,10 @@ function onVatChange(id, val) {
   if (!row) return;
   row.vat = val;
   const tr = document.getElementById('tr_'+id);
-  if (tr && row.acc && row.vat) tr.classList.remove('needs-attention');
+  if (tr) {
+    tr.innerHTML = buildRowHTML(row);
+    if (row.acc && row.vat) tr.classList.remove('needs-attention');
+  }
   // Propagate vat to rows with same description
   propagateDescMatch(id, 'vat');
   updateSummary();
@@ -1439,10 +1453,21 @@ function isHome213(acc) {
   return (acc||'').startsWith('213');
 }
 
-function calcNet(gross, bu, home, acc) {
+// The Use of Home (213) proportion adjustment should only be applied when the
+// VAT rate is one of the reclaimable rates (5%, 12.5%, 20%). For No VAT, Exempt,
+// or Zero Rated rows, the figure is kept at the full gross amount, unadjusted.
+const HOME_ADJUST_VAT_RATES = ['20% (VAT on Expenses)', '12.5% (VAT on Expenses)', '5% (VAT on Expenses)'];
+function homeAdjustmentApplies(vat) {
+  return HOME_ADJUST_VAT_RATES.includes(vat);
+}
+
+function calcNet(gross, bu, home, acc, vat) {
   let amt = parseFloat(gross) || 0;
   if (isHome213(acc)) {
-    amt = amt * (getHomePct() / 100);
+    if (homeAdjustmentApplies(vat)) {
+      amt = amt * (getHomePct() / 100);
+    }
+    // else: VAT rate isn't 5%/12.5%/20% — leave the figure at the full gross amount
   } else {
     if (bu !== '' && bu !== null) {
       const buPct = parseFloat(bu);
@@ -1465,7 +1490,7 @@ function updateNet(id) {
   if (buEl) row.bu = buEl.value;
 
   const gross = parseFloat(row.gross) || 0;
-  const net = calcNet(gross, row.bu, row.home, row.acc);
+  const net = calcNet(gross, row.bu, row.home, row.acc, row.vat);
   const netAdj = (isHome213(row.acc) || row.bu !== '' || row.home) && net !== gross;
   const el = document.getElementById('net_'+id);
   if (el) {
@@ -1554,7 +1579,7 @@ function getRowValue(row, col) {
   if (col === 'net') {
     const buEl = document.querySelector(`#tr_${row.id} .bu-cell input`);
     const bu = buEl ? buEl.value : row.bu;
-    return calcNet(parseFloat(row.gross)||0, bu, row.home, row.acc);
+    return calcNet(parseFloat(row.gross)||0, bu, row.home, row.acc, row.vat);
   }
   if (col === 'date') return row.date || '';
   return String(row[col] || '').toLowerCase();
@@ -1611,10 +1636,12 @@ function updateSummary() {
     posted++;
     const g = parseFloat(r.gross)||0;
     gross += g;
-    // Read live bu from DOM
+    // Read live bu and vat from DOM
     const buEl = document.querySelector(`#tr_${r.id} .bu-cell input`);
     const bu = buEl ? buEl.value : r.bu;
-    net += calcNet(g, bu, r.home, r.acc);
+    const vatEl = document.querySelector(`#tr_${r.id} td:nth-child(3) select`);
+    const vat = vatEl ? vatEl.value : r.vat;
+    net += calcNet(g, bu, r.home, r.acc, vat);
   });
   document.getElementById('statPost').textContent = posted;
   document.getElementById('statExcl').textContent = excl;
@@ -1721,18 +1748,22 @@ function exportBillsCSV() {
     const bu     = buEl?.value !== '' ? buEl?.value : r.bu;
     const accFull= accEl?.value || r.acc;
     const accCode= (accFull||'').split(' - ')[0];
-    const net    = calcNet(gross, bu, r.home, accFull);
+    const vat    = vatEl?.value || r.vat;
+    const net    = calcNet(gross, bu, r.home, accFull, vat);
     const desc   = descEl?.value || r.desc;
     const sup    = supEl?.value  || r.supplier || client;
     const dateStr= fmtDate(dateEl?.value || r.date) || defDate;
     const dueStr = defDue || dateStr;
     const ref    = refEl?.value || r.ref || `${prefix}-${seq}`;
-    const vat    = vatEl?.value || r.vat;
 
     // Build description with BU annotation
     let descOut = desc;
     if (isHome213(accFull)) {
-      descOut += ` @ ${getHomePct().toFixed(2)}% business use (home)`;
+      if (homeAdjustmentApplies(vat)) {
+        descOut += ` @ ${getHomePct().toFixed(2)}% business use (home)`;
+      } else {
+        descOut += ` (Use of Home — VAT not recoverable, full amount)`;
+      }
     } else {
       if (bu !== '' && bu !== null && parseFloat(bu) !== 100) {
         descOut += ` @ ${parseFloat(bu).toFixed(0)}% business use`;
@@ -1792,17 +1823,21 @@ function exportBankCSV() {
     const bu     = buEl?.value !== '' ? buEl?.value : r.bu;
     const accFull= accEl?.value || r.acc;
     const accCode= (accFull||'').split(' - ')[0];
-    const net    = calcNet(gross, bu, r.home, accFull);
+    const vat    = vatEl?.value || r.vat;
+    const net    = calcNet(gross, bu, r.home, accFull, vat);
     const desc   = descEl?.value || r.desc;
     const sup    = supEl?.value  || r.supplier || client;
     const dateStr= fmtDate(dateEl?.value || r.date);
     const ref    = refEl?.value || r.ref || `${prefix}-${seq}`;
-    const vat    = vatEl?.value || r.vat;
 
     // Build description with BU annotation
     let descOut = desc;
     if (isHome213(accFull)) {
-      descOut += ` @ ${getHomePct().toFixed(2)}% business use (home)`;
+      if (homeAdjustmentApplies(vat)) {
+        descOut += ` @ ${getHomePct().toFixed(2)}% business use (home)`;
+      } else {
+        descOut += ` (Use of Home — VAT not recoverable, full amount)`;
+      }
     } else {
       if (bu !== '' && bu !== null && parseFloat(bu) !== 100) {
         descOut += ` @ ${parseFloat(bu).toFixed(0)}% business use`;
